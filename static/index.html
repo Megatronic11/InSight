@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>BrailleTrack</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,400;0,500;1,400&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #080810;
+  --surface:#11111c;
+  --border:#1e1e2e;
+  --accent:#00e5c8;
+  --accent2:#ffcc33;
+  --warn: #ff5f3f;
+  --text: #dde0f0;
+  --muted: #4a4a6a;
+  --fh: 'Syne', sans-serif;
+  --fm: 'DM Mono', monospace;
+}
+
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--fm); overflow: hidden; }
+
+#app { display: flex; flex-direction: column; height: 100dvh; max-width: 480px; margin: 0 auto; }
+
+/* header */
+#header {
+  padding: 12px 18px 8px;
+  display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+#header h1 { font-family: var(--fh); font-size: 1rem; font-weight: 800; color: var(--accent); }
+#header .sub { font-size: 0.6rem; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; margin-left: auto; }
+#conn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); transition: background .3s; }
+#conn-dot.on { background: var(--accent); }
+
+/* pages */
+.screen { display: none; flex-direction: column; flex: 1; min-height: 0; }
+.screen.active { display: flex; }
+
+/* ── stimulus select ── */
+/* this is mainly for if in the future we have selecting stimuli that are already there 
+so we can provide further analysis by having braille and englihs on file and mapping 
+regressions + speed bumps to the english and displaying, but currently we dont have a
+big enough data set of brailel texts, so something of the future! */
+#screen-select { padding: 24px 20px; gap: 16px; overflow-y: auto; }
+#screen-select h2 { font-family: var(--fh); font-size: 1.3rem; color: var(--accent); }
+#screen-select p  { font-size: 0.75rem; color: var(--muted); line-height: 1.6; }
+.stimulus-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 18px;
+  color: var(--text);
+  font-family: var(--fm);
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color .2s, background .2s;
+  -webkit-tap-highlight-color: transparent;
+}
+.stimulus-btn:active { background: #1a1a2e; border-color: var(--accent); }
+.stimulus-btn .s-title { font-family: var(--fh); font-size: 1rem; color: var(--accent2); margin-bottom: 4px; }
+.stimulus-btn .s-preview { font-size: 0.7rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* camera display */
+#screen-camera { position: relative; }
+#raw-video { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+#display-canvas { width: 100%; height: 100%; object-fit: cover; display: block; }
+#tap-overlay { position: absolute; inset: 0; z-index: 10; cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+
+/* displaying what state we are in right now (ie. cal, etc.) */
+#state-chip {
+  position: absolute; top: 10px; left: 10px; z-index: 15;
+  background: rgba(8,8,16,.75); backdrop-filter: blur(6px);
+  border: 1px solid var(--border); border-radius: 20px;
+  padding: 4px 12px; font-size: 0.65rem; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--accent);
+}
+
+/* countdown overlay */
+#countdown-overlay {
+  display: none;
+  position: absolute; inset: 0; z-index: 20;
+  background: rgba(8,8,16,.7); backdrop-filter: blur(4px);
+  align-items: center; justify-content: center; flex-direction: column; gap: 12px;
+}
+#countdown-overlay.visible { display: flex; }
+#countdown-num {
+  font-family: var(--fh); font-size: 7rem; font-weight: 800;
+  color: #fff; line-height: 1;
+  text-shadow: 0 0 40px rgba(0,229,200,.5);
+  transition: transform .1s;
+}
+#countdown-label { font-size: 0.8rem; color: rgba(255,255,255,.6); letter-spacing: .08em; }
+
+/* if no finger detected display */
+#no-finger {
+  position: absolute; bottom: 8px; right: 10px; z-index: 15;
+  font-size: 0.6rem; color: var(--warn); opacity: 0; transition: opacity .3s; pointer-events: none;
+}
+#no-finger.visible { opacity: 1; }
+
+/* bottom stat bar */
+#stats-bar {
+  flex-shrink: 0; background: var(--surface);
+  border-top: 1px solid var(--border);
+  display: grid; grid-template-columns: 1fr 1fr 1fr;
+}
+.stat { padding: 10px 0 8px; text-align: center; border-right: 1px solid var(--border); }
+.stat:last-child { border-right: none; }
+.stat-val { font-family: var(--fh); font-size: 1.4rem; font-weight: 800; color: var(--accent); line-height: 1; transition: color .3s; }
+.stat-val.med { color: var(--accent2); }
+.stat-val.fast { color: var(--warn); }
+.stat-label { font-size: 0.55rem; color: var(--muted); letter-spacing: .1em; text-transform: uppercase; margin-top: 2px; }
+
+/* instruction */
+#instruction {
+  flex-shrink: 0; padding: 8px 18px;
+  font-size: 0.72rem; color: var(--muted); text-align: center;
+  border-top: 1px solid var(--border); min-height: 34px;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* End panel */
+#end-panel {
+  display: none; position: absolute; inset: 0; z-index: 30;
+  background: rgba(8,8,16,.94); backdrop-filter: blur(12px);
+  flex-direction: column; align-items: center; justify-content: center;
+  gap: 18px; padding: 36px 28px;
+}
+#end-panel.visible { display: flex; }
+#end-panel h2 { font-family: var(--fh); font-size: 1.5rem; color: var(--accent); text-align: center; }
+#end-summary { font-size: 0.78rem; color: var(--text); text-align: center; line-height: 2; }
+#end-panel p { font-size: 0.72rem; color: var(--muted); text-align: center; line-height: 1.6; }
+#download-btn {
+  background: var(--accent); color: var(--bg);
+  border: none; border-radius: 8px; padding: 14px 36px;
+  font-family: var(--fh); font-size: 1rem; font-weight: 800;
+  cursor: pointer; letter-spacing: .02em; width: 100%;
+}
+#download-btn:active { opacity: .75; }
+#new-session-btn {
+  background: transparent; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 28px; font-family: var(--fm); font-size: 0.8rem;
+  cursor: pointer; width: 100%;
+}
+#new-session-btn:active { color: var(--text); }
+
+/* ripple */
+.ripple {
+  position: absolute; border-radius: 50%;
+  width: 60px; height: 60px;
+  background: rgba(0,229,200,.2);
+  transform: translate(-50%,-50%) scale(0);
+  animation: rip .5s ease-out forwards;
+  pointer-events: none; z-index: 25;
+}
+@keyframes rip { to { transform: translate(-50%,-50%) scale(3.5); opacity: 0; } }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="header">
+    <span id="conn-dot"></span>
+    <h1>BrailleTrack</h1>
+    <span class="sub" id="header-sub">Connecting…</span>
+  </div>
+
+  <!-- stimulus selection screen -->
+  <div id="screen-select" class="screen active">
+    <h2>Choose a Text</h2>
+    <p>Select the Braille stimulus the student will be reading today.</p>
+    <div id="stimulus-list" style="display:flex;flex-direction:column;gap:12px;">
+      <input 
+        id="session-label" 
+        type="text" 
+        placeholder="Student name or session label (optional)"
+        style="background:var(--surface);border:1px solid var(--border);border-radius:8px;
+           padding:12px 14px;color:var(--text);font-family:var(--fm);font-size:0.8rem;
+           outline:none;width:100%;"
+      />
+      <button class="stimulus-btn" id="custom-btn">
+        <div class="s-title">Custom Session</div>
+        <div class="s-preview">Snapshot + calibration, no preset text</div>
+      </button>
+    </div>
+  </div>
+
+  <!-- camera + calibration + reading screen -->
+  <div id="screen-camera" class="screen">
+    <video id="raw-video" autoplay playsinline muted></video>
+    <canvas id="display-canvas"></canvas>
+    <div id="tap-overlay"></div>
+    <div id="state-chip">—</div>
+    <div id="no-finger">No finger detected</div>
+
+    <!-- countdown b4 reading overlay -->
+    <div id="countdown-overlay">
+      <div id="countdown-num">15</div>
+      <div id="countdown-label">Get ready to read</div>
+    </div>
+
+    <!-- overlay post session -->
+    <div id="end-panel">
+      <h2>Session Complete ✓</h2>
+      <div id="end-summary">—</div>
+      <p>Download the CSV and upload it to the<br>analysis page to see your speed map.</p>
+      <button id="download-btn">Download CSV</button>
+      <button id="heatmap-btn" style="background:var(--accent2);color:var(--bg);border:none;border-radius:8px;padding:14px 36px;font-family:var(--fh);font-size:1rem;font-weight:800;cursor:pointer;width:100%;">Download Heatmap PNG</button>
+      <button id="new-session-btn">Start new session</button>
+    </div>
+  </div>
+
+  <div id="stats-bar" style="display:none">
+    <div class="stat">
+      <div class="stat-val" id="stat-cps">—</div>
+      <div class="stat-label">chars/sec</div>
+    </div>
+    <div class="stat">
+      <div class="stat-val" id="stat-cpm">—</div>
+      <div class="stat-label">chars/min</div>
+    </div>
+    <div class="stat">
+      <div class="stat-val" id="stat-line">—</div>
+      <div class="stat-label">line</div>
+    </div>
+  </div>
+
+  <div id="instruction">Select a stimulus to begin</div>
+
+</div>
+<canvas id="capture-canvas" style="display:none"></canvas>
+
+<script>
+// elements
+const rawVideo = document.getElementById("raw-video");
+const displayCanvas = document.getElementById("display-canvas");
+const captureCanvas = document.getElementById("capture-canvas");
+const tapOverlay = document.getElementById("tap-overlay");
+const stateChip = document.getElementById("state-chip");
+const noFinger = document.getElementById("no-finger");
+const statCps = document.getElementById("stat-cps");
+const statCpm = document.getElementById("stat-cpm");
+const statLine = document.getElementById("stat-line");
+const instruction = document.getElementById("instruction");
+const connDot = document.getElementById("conn-dot");
+const headerSub = document.getElementById("header-sub");
+const endPanel = document.getElementById("end-panel");
+const endSummary = document.getElementById("end-summary");
+const downloadBtn = document.getElementById("download-btn");
+const newSessionBtn = document.getElementById("new-session-btn");
+const screenSelect = document.getElementById("screen-select");
+const screenCamera = document.getElementById("screen-camera");
+const statsBar = document.getElementById("stats-bar");
+const stimulusList = document.getElementById("stimulus-list");
+const countdownOverlay = document.getElementById("countdown-overlay");
+const countdownNum = document.getElementById("countdown-num");
+const dCtx = displayCanvas.getContext("2d");
+const cCtx = captureCanvas.getContext("2d");
+
+// state
+let ws = null;
+let streaming = false;
+let currentState = "STIMULUS_SELECT";
+let csvBlob = null;
+let csvFilename = "session.csv";
+let heatmapBlob = null;
+let heatmapFilename = "heatmap.png";
+let frameInterval = null;
+let countdownInterval = null;
+
+//audio feedback during coutndwons
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function playBeep(freq, dur = 0.22, vol = 0.3) {
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  const osc = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  osc.connect(g); g.connect(audioCtx.destination);
+  osc.frequency.value = freq;
+  g.gain.setValueAtTime(vol, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(.001, audioCtx.currentTime + dur);
+  osc.start(); osc.stop(audioCtx.currentTime + dur);
+}
+
+//converting the data heat map image into a downloadable viewable file type
+function dataURItoBlob(dataURI) {
+  const [header, data] = dataURI.split(",");
+  const mime = header.match(/:(.*?);/)[1];
+  const bytes = atob(data);
+  const arr = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+  return new Blob([arr], { type: mime });
+}
+
+// WebSocket (web hosting thing)
+function connect() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+  ws.onopen = () => {
+    connDot.classList.add("on");
+    headerSub.textContent = "Connected";
+    loadStimuli(); //this is calling the load stimuli screen
+    //showCameraScreen(); //this is skipping that screen and going straight to cal
+    // removed the show camera command becasue I thought this would help it show the camera becasue there were 
+    // screen blackout issues but this is just skipping the stimuli choosing and causing the baclouts beacue of conflicts
+  };
+
+  ws.onmessage = (evt) => {
+    const msg = JSON.parse(evt.data);
+    
+    if (msg.type === "stimulus_selected") {
+      showCameraScreen();
+      return;
+    }
+    
+    if (msg.type === "countdown_started") {
+      startCountdownUI();
+      return;
+    }
+
+    if (msg.type === "frame") {
+      //get processed frame and overlay it over feed
+      const img = new Image();
+      img.onload = () => {
+        displayCanvas.width  = img.naturalWidth;
+        displayCanvas.height = img.naturalHeight;
+        dCtx.clearRect(0, 0, displayCanvas.width, displayCanvas.height);
+        dCtx.drawImage(img, 0, 0);
+      };
+      img.src = msg.image;
+
+      const s = msg.status;
+      currentState = s.state;
+      updateUI(s);
+      if (s.beep === "low")   playBeep(660);
+      if (s.beep === "high")  playBeep(1100);
+      if (s.beep === "error") playBeep(220);
+      return;
+    }
+
+    if (msg.type === "session_ended") {
+      stopStreaming();
+      csvBlob = new Blob([msg.csv], { type: "text/csv" });
+      csvFilename = msg.csv_filename;
+      heatmapBlob  = msg.heatmap ? dataURItoBlob(msg.heatmap) : null;
+      heatmapFilename = msg.heatmap_filename;
+      showEndPanel(msg);
+      playBeep(1100, .4);
+      return;
+    }
+  };
+
+  ws.onclose = () => {
+    connDot.classList.remove("on");
+    headerSub.textContent = "Reconnecting…";
+    stopStreaming();
+    setTimeout(connect, 2000);
+  };
+}
+
+/*/ stimuli loading! (commented out to run w custom only for now bc of reasons detailed above :)
+async function loadStimuli() {
+  const res  = await fetch("/stimuli");
+  const list = await res.json();
+  stimulusList.innerHTML = "";
+  list.forEach(s => {
+    const btn = document.createElement("button");
+    btn.className = "stimulus-btn";
+    btn.innerHTML = `<div class="s-title">${s.title}</div>
+                     <div class="s-preview">${s.english}</div>`;
+    btn.addEventListener("click", () => {
+      if (audioCtx.state === "suspended") audioCtx.resume();
+      ws.send(JSON.stringify({ type: "select_stimulus", id: s.id }));
+    });
+    stimulusList.appendChild(btn);
+  });
+}
+*/
+
+async function loadStimuli() {
+  document.getElementById("custom-btn").addEventListener("click", () => {
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    const label = document.getElementById("session-label").value.trim();
+    csvFilename = label 
+      ? `${label.replace(/\s+/g, "_")}_${new Date().toISOString().slice(0,10)}.csv`
+      : `session_${new Date().toISOString().slice(0,10)}.csv`;
+    showCameraScreen();
+  });
+}
+
+// show camera screen
+function showCameraScreen() {
+  screenSelect.classList.remove("active");
+  screenCamera.classList.add("active");
+  statsBar.style.display = "grid";
+  currentState = "CAL_1";  // ← add this line
+  instruction.textContent = "Calibration: place finger on char 1, line 1";
+  stateChip.textContent   = "Cal 1/4";
+  startCamera();
+}
+
+// camera + checking perms
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } },
+      audio: false,
+    });
+    rawVideo.srcObject = stream;
+    rawVideo.onloadedmetadata = () => {
+      captureCanvas.width = rawVideo.videoWidth;
+      captureCanvas.height = rawVideo.videoHeight;
+      rawVideo.play().then(() => startStreaming()).catch(console.error);
+    };
+  } catch (e) {
+    instruction.textContent = "Camera permission denied";
+  }
+}
+
+function startStreaming() {
+  if (streaming) return;
+  streaming = true;
+  frameInterval = setInterval(sendFrame, 80);
+}
+
+function stopStreaming() {
+  streaming = false;
+  clearInterval(frameInterval);
+}
+
+function sendFrame() {
+  if (!ws || ws.readyState !== 1) return;
+  if (currentState === "STIMULUS_SELECT" || currentState === "ENDED") return;
+  cCtx.drawImage(rawVideo, 0, 0, captureCanvas.width, captureCanvas.height);
+  ws.send(JSON.stringify({ type: "frame", data: captureCanvas.toDataURL("image/jpeg", 0.7) }));
+}
+
+// countdown UI (10s)
+function startCountdownUI() {
+  countdownOverlay.classList.add("visible");
+  instruction.textContent = "Get ready to read!";
+  let remaining = 10;
+  countdownNum.textContent = remaining;
+
+  countdownInterval = setInterval(() => {
+    remaining--;
+    countdownNum.textContent = Math.max(0, remaining);
+    // pulse animation
+    countdownNum.style.transform = "scale(1.15)";
+    setTimeout(() => {
+      countdownNum.style.transform = "scale(1)";
+    }, 150);
+    
+    if (remaining <= 3 && remaining > 0) playBeep(440, .1);
+    if (remaining <= 0) {
+      clearInterval(countdownInterval);
+      countdownOverlay.classList.remove("visible");
+      playBeep(880, .3);
+      instruction.textContent = "Reading — tap screen when done";
+    }
+  }, 1000);
+}
+
+// processing screen tap input
+tapOverlay.addEventListener("click", (e) => {
+  //ripple
+  const r = document.createElement("div");
+  r.className = "ripple";
+  r.style.left = e.clientX + "px";
+  r.style.top = e.clientY + "px";
+  tapOverlay.appendChild(r);
+  r.addEventListener("animationend", () => r.remove());
+
+  if (audioCtx.state === "suspended") audioCtx.resume();
+
+  if (["READY", "READING"].includes(currentState)) {
+    ws.send(JSON.stringify({ type: "tap" }));
+  }
+});
+
+// UI updates: for cals and the state screen updateing
+const CHIP_LABELS = {
+  CAL_1: "Cal 1/4",
+  CAL_2: "Cal 2/4",
+  CAL_3: "Cal 3/4",
+  CAL_4: "Cal 4/4",
+  READY: "Ready",
+  COUNTDOWN: "Starting…",
+  READING: "Reading",
+  ENDED: "Done",
+};
+const INSTRUCTIONS = {
+  CAL_1: "Place finger on char 1, line 1 — hold still",
+  CAL_2: "Move finger to char 2, line 1 — hold still",
+  CAL_3: "Move finger to the LAST char of line 1 — hold still",
+  CAL_4: "Move finger to char 1, line 2 — hold still",
+  READY: "Tap the screen when ready to start",
+  READING: "Reading — tap screen when done",
+  ENDED: "Session complete",
+};
+
+function updateUI(s) {
+  // update label telling which state in (ie. cal1)
+  let chipLabel = s.state;
+  if (s.state === "CAL_1") chipLabel = "Cal 1/4";
+  else if (s.state === "CAL_2") chipLabel = "Cal 2/4";
+  else if (s.state === "CAL_3") chipLabel = "Cal 3/4";
+  else if (s.state === "CAL_4") chipLabel = "Cal 4/4";
+  else if (s.state === "READY") chipLabel = "Ready";
+  else if (s.state === "COUNTDOWN") chipLabel = "Starting…";
+  else if (s.state === "READING") chipLabel = "Reading";
+  else if (s.state === "ENDED") chipLabel = "Done";
+  stateChip.textContent = chipLabel;
+
+  // instructions lol helptext such a funny name whyd i dot hat
+  let helpText = "";
+  if (s.state === "CAL_1") helpText = "Place finger on char 1, line 1 — hold still";
+  else if (s.state === "CAL_2") helpText = "Move finger to char 2, line 1 — hold still";
+  else if (s.state === "CAL_3") helpText = "Move finger to the LAST char of line 1 — hold still";
+  else if (s.state === "CAL_4") helpText = "Move finger to char 1, line 2 — hold still";
+  else if (s.state === "READY") helpText = "Tap the screen when ready to start";
+  else if (s.state === "READING") helpText = "Reading — tap screen when done";
+  else if (s.state === "ENDED") helpText = "Session complete";
+
+  if (helpText) instruction.textContent = helpText;
+
+  noFinger.classList.toggle("visible", !s.finger_detected && s.state !== "ENDED");
+
+  if (s.state === "READING") {
+    const cps = s.chars_per_sec || 0;
+    statCps.textContent = cps.toFixed(2);
+    statCpm.textContent = Math.round(s.chars_per_min || 0);
+    statLine.textContent = (s.current_line || 0) + 1;
+    if (cps > 5) {
+      statCps.className = "stat-val fast";
+      statCpm.className = "stat-val fast";
+    } else if (cps > 2) {
+      statCps.className = "stat-val med";
+      statCpm.className = "stat-val med";
+    } else {
+      statCps.className = "stat-val";
+      statCpm.className = "stat-val";
+    }
+  }
+}
+
+// end panel
+function showEndPanel(msg) {
+  const lines = (msg.csv || "").trim().split("\n");
+  // Find TOTAL row
+  const totalRow = lines.find(l => l.startsWith("TOTAL"));
+  let summaryHTML = `${msg.num_lines || "?"} lines recorded`;
+  if (totalRow) {
+    const cols = totalRow.split(",");
+    const cps = parseFloat(cols[3]) || 0;
+    const cpm = parseFloat(cols[4]) || 0;
+    summaryHTML += `<br>Avg: <strong>${cps.toFixed(2)} c/s</strong> &nbsp;·&nbsp; <strong>${Math.round(cpm)} c/min</strong>`;
+  }
+  endSummary.innerHTML = summaryHTML;
+  endPanel.classList.add("visible");
+}
+
+downloadBtn.addEventListener("click", () => {
+  if (!csvBlob) return;
+  const url = URL.createObjectURL(csvBlob);
+  const a = document.createElement("a");
+  a.href = url; a.download = csvFilename; a.click();
+  URL.revokeObjectURL(url);
+});
+
+document.getElementById("heatmap-btn").addEventListener("click", () => {
+  if (!heatmapBlob) return;
+  const url = URL.createObjectURL(heatmapBlob);
+  const a = document.createElement("a");
+  a.href = url; a.download = heatmapFilename; a.click();
+  URL.revokeObjectURL(url);
+});
+
+newSessionBtn.addEventListener("click", () => {
+  location.reload();
+});
+
+// running!
+document.addEventListener("DOMContentLoaded", connect);
+</script>
+</body>
+</html>
